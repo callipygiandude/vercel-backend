@@ -4,23 +4,30 @@ import sharp from "sharp";
 import pixelmatch from "pixelmatch";
 const app = express();
 import cors from "cors";
-app.use(cors());
+app.use(
+  cors({
+    origin: "http://localhost:3000", // Specify the origin you want to allow
+    methods: ["GET", "POST"], // Specify allowed methods
+    allowedHeaders: ["Content-Type"], // Specify allowed headers
+  })
+);
+app.use(express.json({limit: '2mb'}));
 
 const OPTIMISED_SIZE = 28;
 const THRESHOLD = 0.1;
 const FILTER_LIMIT = 0.15;
 const SLICE_LIMIT = 10;
 
-app.get("/getFilteredIconsFromSVG", handleSVG);
-app.get("/getFilteredIconsFromPNG", handlePNG);
+app.post("/getFilteredIconsFromSVG", handleSVG);
+app.post("/getFilteredIconsFromPNG", handlePNG);
 
 (async () => {
-  app.listen(9001, () => console.log("Server ready on port 9001."));
+  app.listen(3001, () => console.log("Server ready on port 3001."));
 })();
 export default app;
 
 async function handleSVG(req, res) {
-  const { userInput } = req.query;
+  const { userInput } = req.body;
   try {
     let t1 = Date.now();
     const baseSVGPath = Buffer.from(userInput);
@@ -84,7 +91,7 @@ async function filterIcons(baseData) {
 }
 
 async function handlePNG(req, res) {
-  const { userInput } = req.query;
+  const { userInput } = req.body;
   try {
     let t1 = Date.now();
     const PNGBuffer = getBufferFromPNG(userInput);
