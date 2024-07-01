@@ -8,10 +8,11 @@ app.use(cors());
 app.use(express.json({ limit: "2mb" }));
 
 const OPTIMISED_SIZE = 28;
-const THRESHOLD = 0.1;
+const THRESHOLD = 0.15;
 const SVG_FILTER_LIMIT = 0.15;
-const PNG_FILTER_LIMIT = 0.20;
+const PNG_FILTER_LIMIT = 0.25;
 const SLICE_LIMIT = 10;
+const BG_THRESHOLD = 219;
 
 app.post("/getFilteredIconsFromSVG", handleSVG);
 app.post("/getFilteredIconsFromPNG", handlePNG);
@@ -42,7 +43,7 @@ async function handleSVG(req, res) {
 async function convertImageToData(image) {
   try {
     const { data } = await sharp(image)
-      .resize(OPTIMISED_SIZE, OPTIMISED_SIZE)
+      .resize(OPTIMISED_SIZE, OPTIMISED_SIZE, {fit: 'fill'})
       .ensureAlpha()
       .raw()
       .toBuffer({ resolveWithObject: true });
@@ -113,7 +114,7 @@ function getBufferFromPNG(file) {
 async function boundingBox(image) {
   const { data, info } = await sharp(image)
                                 .greyscale()
-                                .threshold(220)
+                                .threshold(BG_THRESHOLD)
                                 .raw()
                                 .toBuffer({ resolveWithObject: true });
 
@@ -138,7 +139,7 @@ async function boundingBox(image) {
     }
   }
 
-  return [x1, y1, x2, y2];
+  return [x1, y1, x2, y2, width, height];
 }
 
 async function processImage(image) {
@@ -149,10 +150,11 @@ async function processImage(image) {
     return;
   }
 
-    let [x1, y1, x2, y2] = bbox;
+    let [x1, y1, x2, y2, image_width, image_height] = bbox;
     let width = x2 - x1;
     let height = y2 - y1;
-
+    let [cx1, cy1, cwidth, cheight] = [x1,y1,width,height];
+    
     if (height < width) {
     const diff = width - height;
     y1 -= diff / 2;
@@ -169,13 +171,35 @@ async function processImage(image) {
     if(x1 > x2 || y1 > y2) {
         return convertImageToData(image);
     }
+    if (
+      height > image_height ||
+      width > image_width ||
+      y1+height > image_height ||
+      x1+width > image_width
+    ) {
+      const extractedBuffer = await sharp(image)
+        .extract({ left: cx1, top: cy1, width: cwidth, height: cheight })
+        .png()
+        .toBuffer({ resolveWithObject: true });
+
+      const { data } = await sharp(extractedBuffer.data)
+        .resize(OPTIMISED_SIZE, OPTIMISED_SIZE, {fit: 'fill'})
+        .ensureAlpha()
+        .raw()
+        .toBuffer({ resolveWithObject: true });
+
+      return data;
+    }
+    [x1, y1, width, height] = [x1, y1, width, height].map(a => Math.round(a));
+    
+
   const extractedBuffer = await sharp(image)
     .extract({ left: x1, top: y1, width, height })
     .png()
     .toBuffer({ resolveWithObject: true });
 
   const { data } = await sharp(extractedBuffer.data)
-    .resize(OPTIMISED_SIZE, OPTIMISED_SIZE)
+    .resize(OPTIMISED_SIZE, OPTIMISED_SIZE, {fit: 'fill'})
     .ensureAlpha()
     .raw()
     .toBuffer({ resolveWithObject: true });
