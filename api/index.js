@@ -8,11 +8,11 @@ app.use(cors());
 app.use(express.json({ limit: "2mb" }));
 
 const OPTIMISED_SIZE = 28;
-const THRESHOLD = 0.15;
+const PIXELMATCH_THRESHOLD = 0.1;
 const SVG_FILTER_LIMIT = 0.15;
-const PNG_FILTER_LIMIT = 0.25;
+const PNG_FILTER_LIMIT = 0.35;
 const SLICE_LIMIT = 10;
-const BG_THRESHOLD = 219;
+const COLOUR_DIFF_THRESHOLD = 25;
 
 app.post("/getFilteredIconsFromSVG", handleSVG);
 app.post("/getFilteredIconsFromPNG", handlePNG);
@@ -67,7 +67,7 @@ async function filterIcons(baseData, LIMIT) {
       OPTIMISED_SIZE,
       OPTIMISED_SIZE,
       {
-        threshold: THRESHOLD,
+        threshold: PIXELMATCH_THRESHOLD,
         includeAA: false,
       }
     );
@@ -113,33 +113,46 @@ function getBufferFromPNG(file) {
 
 async function boundingBox(image) {
   const { data, info } = await sharp(image)
-                                .greyscale()
-                                .threshold(BG_THRESHOLD)
                                 .raw()
                                 .toBuffer({ resolveWithObject: true });
 
-  const { width, height } = info;
-  const bg = data[0];
+  const { width, height, channels } = info;
+  const bg = data.subarray(0, channels);
   let x1 = width,
     y1 = height,
     x2 = 0,
     y2 = 0;
+  let modifiedData = Buffer.alloc(data.length);
 
   for (let y = 0; y < height; y++) {
     for (let x = 0; x < width; x++) {
-      const offset = y * width + x;
-      const value = data[offset];
+      const offset = (y * width + x)*channels;
+      const pixel = data.subarray(offset, offset+channels);
 
-      if (value !== bg) {
+      if (!equalPixels(pixel, bg, channels)) {
         if (x < x1) x1 = x;
         if (x > x2) x2 = x;
         if (y < y1) y1 = y;
         if (y > y2) y2 = y;
+        data.copy(modifiedData, offset, offset, offset + channels);
+      } else {
+        for (let c = 0; c < channels; c++) {
+          modifiedData[offset + c] = 255;
+        }
       }
     }
   }
 
-  return [x1, y1, x2, y2, width, height];
+  return {x1, y1, x2, y2, image_width: width, image_height: height, channels, data: modifiedData};
+}
+
+function equalPixels(pixel1, pixel2, channels) {
+  for(let c = 0; c < channels; c++) {
+    if(Math.abs(pixel1[c] - pixel2[c]) >= COLOUR_DIFF_THRESHOLD) {
+      return false;
+    }
+  }
+  return true;
 }
 
 async function processImage(image) {
@@ -150,59 +163,45 @@ async function processImage(image) {
     return;
   }
 
-    let [x1, y1, x2, y2, image_width, image_height] = bbox;
+    let {x1, y1, x2, y2, image_width, image_height, channels, data} = bbox;
     let width = x2 - x1;
     let height = y2 - y1;
-    let [cx1, cy1, cwidth, cheight] = [x1,y1,width,height];
-    
-    if (height < width) {
-    const diff = width - height;
-    y1 -= diff / 2;
-    height = width;
-    } else {
-    const diff = height - width;
-    x1 -= diff / 2;
-    width = height;
-    }
-
-    if (x1 < 0) x1 = 0;
-    if (y1 < 0) y1 = 0;
+    const diff = Math.abs(width - height);
 
     if(x1 > x2 || y1 > y2) {
         return convertImageToData(image);
     }
-    if (
-      height > image_height ||
-      width > image_width ||
-      y1+height > image_height ||
-      x1+width > image_width
-    ) {
-      const extractedBuffer = await sharp(image)
-        .extract({ left: cx1, top: cy1, width: cwidth, height: cheight })
+      const bgRemoved = await sharp(data, {
+        raw: {
+          width: image_width,
+          height: image_height,
+          channels,
+        },
+      })
         .png()
-        .toBuffer({ resolveWithObject: true });
+        .toBuffer();
 
-      const { data } = await sharp(extractedBuffer.data)
-        .resize(OPTIMISED_SIZE, OPTIMISED_SIZE, {fit: 'fill'})
+      const extractedBuffer = await sharp(bgRemoved)
+        .extract({
+          left: x1,
+          top: y1,
+          width: width,
+          height: height,
+        })
+        .extend({
+          top: height < width ? Math.round(diff / 2) : 0,
+          bottom: height < width ? Math.round(diff / 2) : 0,
+          left: height > width ? Math.round(diff / 2) : 0,
+          right: height > width ? Math.round(diff / 2) : 0,
+          background: { r: 255, g: 255, b: 255, alpha: 1 },
+        })
+        .toBuffer();
+
+      const { data: retData } = await sharp(extractedBuffer)
+        .resize(OPTIMISED_SIZE, OPTIMISED_SIZE, { fit: "fill" })
         .ensureAlpha()
         .raw()
         .toBuffer({ resolveWithObject: true });
 
-      return data;
-    }
-    [x1, y1, width, height] = [x1, y1, width, height].map(a => Math.round(a));
-    
-
-  const extractedBuffer = await sharp(image)
-    .extract({ left: x1, top: y1, width, height })
-    .png()
-    .toBuffer({ resolveWithObject: true });
-
-  const { data } = await sharp(extractedBuffer.data)
-    .resize(OPTIMISED_SIZE, OPTIMISED_SIZE, {fit: 'fill'})
-    .ensureAlpha()
-    .raw()
-    .toBuffer({ resolveWithObject: true });
-
-  return data;
+      return retData;
 }
