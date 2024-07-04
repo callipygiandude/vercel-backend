@@ -117,6 +117,9 @@ async function boundingBox(image) {
                                 .toBuffer({ resolveWithObject: true });
 
   const { width, height, channels } = info;
+  const black = Buffer.from([0x0f, 0x0f, 0x0f, 0xff]);
+  const lightBlack = Buffer.from([0x0a, 0x0a, 0x14, 0xff]);
+  const white = Buffer.from([0xf5, 0xf5, 0xf5, 0xff]);
   const bg = data.subarray(0, channels);
   let x1 = width,
     y1 = height,
@@ -134,10 +137,16 @@ async function boundingBox(image) {
         if (x > x2) x2 = x;
         if (y < y1) y1 = y;
         if (y > y2) y2 = y;
-        data.copy(modifiedData, offset, offset, offset + channels);
+        if (equalPixels(black, bg, channels) && equalPixels(pixel, white, channels)) {
+          for (let c = 0; c < channels; c++) {
+            modifiedData[offset + c] = lightBlack[c];
+          }
+        } else {
+          data.copy(modifiedData, offset, offset, offset + channels);
+        }
       } else {
         for (let c = 0; c < channels; c++) {
-          modifiedData[offset + c] = 255;
+          modifiedData[offset + c] = 0xff;
         }
       }
     }
@@ -147,7 +156,7 @@ async function boundingBox(image) {
 }
 
 function equalPixels(pixel1, pixel2, channels) {
-  for(let c = 0; c < channels; c++) {
+  for(let c = 0; c < channels-1; c++) {
     if(Math.abs(pixel1[c] - pixel2[c]) >= COLOUR_DIFF_THRESHOLD) {
       return false;
     }
