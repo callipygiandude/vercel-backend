@@ -30,7 +30,7 @@ async function handleSVG(req, res) {
     const baseSVGData = await convertImageToData(baseSVGPath);
     let sortedRes = await filterIcons(baseSVGData, SVG_FILTER_LIMIT);
     let t2 = Date.now();
-    res.status(200).json({ sortedRes: sortedRes, time: t2 - t1 });
+    res.status(200).json({ sortedRes: sortedRes, time: t2 - t1, });
   } catch (error) {
     console.error(`Error with API call: `, error);
     res.status(500).json({
@@ -76,6 +76,7 @@ async function filterIcons(baseData, LIMIT) {
       id: image.id,
       mismatch: mismatchRatio,
       exactMatch: mismatchRatio === 0,
+      path: image.nodepath
     };
   });
 
